@@ -1,40 +1,75 @@
-name: Cl
+name: Windows RDP with ngrok
 
-on: [push, workflow_dispatch]
+on: [push]
 
 jobs:
-  build:
+  setup-windows:
     runs-on: windows-latest
 
     steps:
+    - name: Check out the repository
+      uses: actions/checkout@v2
+
     - name: Download ngrok
-      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+      run: Invoke-WebRequest -Uri https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
 
-    - name: Extract ngrok
-      run: Expand-Archive ngrok.zip -DestinationPath .
+    - name: Unzip ngrok
+      run: Expand-Archive ngrok.zip -DestinationPath $Env:USERPROFILE\ngrok
 
-    - name: List Files (Debugging Step)
-      run: Get-ChildItem -Path .\ngrok\
+    - name: Add ngrok to PATH
+      run: |
+        $env:PATH += ";$Env:USERPROFILE\ngrok"
+        [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Process)
 
-    - name: Add ngrok to PATH (Debugging Step)
-      run: $env:PATH += ";$PWD\ngrok"
-    
-    - name: Authenticate ngrok
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
-      env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+    - name: Enable RDP
+      run: |
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    - name: Enable Remote Desktop
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+    - name: Start ngrok
+      run: |
+        .\ngrok\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        .\ngrok\ngrok.exe tcp 3389 --log=stdout > ngrok.log &
+      shell: pwsh
 
-    - name: Enable Firewall Rule
-      run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - name: Get ngrok public URL
+      id: ngrok-url
+      run: |
+        Start-Sleep -Seconds 10
+        $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels | ConvertFrom-Json).tunnels[0].public_url
+        Write-Output "::set-output name=NGROK_PUBLIC_URL::$ngrok_url"
+      shell: pwsh
 
-    - name: Set User Authentication
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - name: Output ngrok public URL
+      run: echo "RDP URL: ${{ steps.ngrok-url.outputs.NGROK_PUBLIC_URL }}"
+runs-on: windows-latest
+- name: Download ngrok
+  run: Invoke-WebRequest -Uri https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
 
-    - name: Set Local User Password
-      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+- name: Unzip ngrok
+  run: Expand-Archive ngrok.zip -DestinationPath $Env:USERPROFILE\ngrok
 
-    - name: Create ngrok Tunnel
-      run: .\ngrok\ngrok.exe tcp 3389
+- name: Add ngrok to PATH
+  run: |
+    $env:PATH += ";$Env:USERPROFILE\ngrok"
+    [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Process)
+- name: Enable RDP
+  run: |
+    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -name "fDenyTSConnections" -Value 0
+    Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+- name: Start ngrok
+  run: |
+    .\ngrok\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+    .\ngrok\ngrok.exe tcp 3389 --log=stdout > ngrok.log &
+  shell: pwsh
+
+- name: Get ngrok public URL
+  id: ngrok-url
+  run: |
+    Start-Sleep -Seconds 10
+    $ngrok_url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels | ConvertFrom-Json).tunnels[0].public_url
+    Write-Output "::set-output name=NGROK_PUBLIC_URL::$ngrok_url"
+  shell: pwsh
+
+- name: Output ngrok public URL
+  run: echo "RDP URL: ${{ steps.ngrok-url.outputs.NGROK_PUBLIC_URL }}"
